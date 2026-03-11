@@ -29,9 +29,9 @@
 
 > Congratulations if you managed to deploy it successfully using Cloud Hosting...
 
-### Method 3: Docker Compose
+### Method 3: Docker Compose (not yet active)
 
-1. `docker build . -t "sync-player:v1.10.6"`
+1. `docker build . -t "sync-player:v1.11.0"`
 2. `docker compose up -d`
 3. For configurations please use the environment variables as in the docker compose example to override config.env
 
