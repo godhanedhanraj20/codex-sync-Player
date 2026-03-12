@@ -10,6 +10,8 @@ env:
   REGISTRY: ghcr.io
   # github.repository is usually 'username/repo-name'
   IMAGE_NAME: ${{ github.repository }}
+  # Opt-in to Node 24 for Actions to clear deprecation warnings
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
