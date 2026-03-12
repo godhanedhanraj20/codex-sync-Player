@@ -1,10 +1,11 @@
-FROM node:23-slim AS builder
+FROM node:23 AS builder
 
 WORKDIR /app
 COPY . .
 
+# Run install with devDependencies so postinstall.js can use esbuild
 WORKDIR /app/res
-RUN npm ci --omit=dev
+RUN npm install && npm prune --omit=dev
 
 
 FROM node:23-slim
