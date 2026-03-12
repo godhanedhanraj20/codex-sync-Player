@@ -1,0 +1,23 @@
+node_modules
+npm-debug.log
+*.bat
+*.sh
+yarn-error.log
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+docker-compose.yaml
+.dockerignore
+*.md
+coverage
+dist
+build
+tmp
+*.log
+
+# Prevent giant media libraries and caching logic from flooding the build RAM context
+media
+tracks
+memory
+res/img/thumbnails

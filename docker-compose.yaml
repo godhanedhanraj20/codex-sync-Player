@@ -1,0 +1,18 @@
+services:
+  sync-player:
+    image: ghcr.io/lakunake/sync-player:latest
+    container_name: sync-player
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - config.env
+    volumes:
+      - ./media:/app/media
+      - ./tracks:/app/tracks
+      - ./memory:/app/memory
+      - ./res/img/thumbnails:/app/res/img/thumbnails
+      - ./cert:/app/cert
+    environment:
+      # Optional: Override values from config.env here if needed
+      SYNC_PORT: 3000

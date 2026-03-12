@@ -31,9 +31,9 @@
 
 ### Method 3: Docker Compose
 
-1. Make sure you have Docker installed on your system.
-2. Run `docker-compose up -d` in the project folder. (Docker will automatically download the pre-compiled Sync-Player image for your system architecture).
-3. For configurations, edit `config.env` or use environment variables inside `docker-compose.yaml` to override them.
+1. Make sure you have [Docker](https://www.docker.com/products/docker-desktop/) installed on your machine.
+2. Run `docker-compose up -d` in the project folder.
+5. To change settings, edit `config.env` and restart the container (`docker-compose restart`).
 
 ### Method 4: LAN or Public IP (Direct Hosting)
 
