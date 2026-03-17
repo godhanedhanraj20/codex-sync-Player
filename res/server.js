@@ -4,6 +4,8 @@ const https = require('https');
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 const { execFile, exec, spawn } = require('child_process');
 const util = require('util');
 const execFileAsync = util.promisify(execFile);
@@ -2608,6 +2610,149 @@ app.get('/api/rooms/:roomCode', (req, res) => {
 // Server mode status endpoint
 app.get('/api/server-mode', (req, res) => {
   res.json({ serverMode: SERVER_MODE });
+});
+
+// ==================== Remote Stream Proxy ====================
+// Phase 1 backend-only endpoint for external stream passthrough with Range support
+
+function isPrivateOrLocalHostname(hostname) {
+  const host = String(hostname || '').toLowerCase();
+
+  if (!host) return true;
+
+  // Common local-only hostnames
+  if (host === 'localhost' || host === '0.0.0.0' || host.endsWith('.local')) {
+    return true;
+  }
+
+  // IPv6 local ranges
+  if (host === '::1' || host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) {
+    return true;
+  }
+
+  // IPv4 private/loopback/link-local ranges
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    const octets = host.split('.').map(n => parseInt(n, 10));
+    if (octets.some(n => Number.isNaN(n) || n < 0 || n > 255)) return true;
+
+    const [a, b] = octets;
+    if (
+      a === 10 ||
+      a === 127 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function validateStreamUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return { valid: false, error: 'Missing url query parameter' };
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { valid: false, error: 'Invalid URL format' };
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return { valid: false, error: 'Only http/https URLs are allowed' };
+  }
+
+  if (isPrivateOrLocalHostname(parsed.hostname)) {
+    return { valid: false, error: 'Local/private network targets are not allowed' };
+  }
+
+  return { valid: true, parsed };
+}
+
+app.get('/api/stream', async (req, res) => {
+  const validation = validateStreamUrl(req.query.url);
+  if (!validation.valid) {
+    return res.status(400).json({ error: validation.error });
+  }
+
+  const targetUrl = validation.parsed.toString();
+  const rangeHeader = req.headers.range;
+  const controller = new AbortController();
+  const timeoutMs = 15000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const upstreamHeaders = {
+      'accept': '*/*',
+      'user-agent': 'Sync-Player-Stream-Proxy/1.0'
+    };
+
+    // Forward Range exactly so browser seeking can work through the proxy.
+    if (rangeHeader) {
+      upstreamHeaders.range = rangeHeader;
+    }
+
+    const upstream = await fetch(targetUrl, {
+      method: 'GET',
+      headers: upstreamHeaders,
+      redirect: 'follow',
+      signal: controller.signal
+    });
+
+    if (!upstream.ok && upstream.status !== 206) {
+      console.error(`[StreamProxy] Upstream error ${upstream.status} for ${targetUrl}`);
+      return res.status(502).json({ error: `Upstream responded with ${upstream.status}` });
+    }
+
+    // If client requested byte range but upstream ignored it, fail clearly.
+    if (rangeHeader && upstream.status !== 206) {
+      console.error(`[StreamProxy] Upstream did not honor Range for ${targetUrl}`);
+      return res.status(502).json({ error: 'Upstream does not support range requests' });
+    }
+
+    const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+    const contentLength = upstream.headers.get('content-length');
+    const contentRange = upstream.headers.get('content-range');
+    const acceptRanges = upstream.headers.get('accept-ranges') || 'bytes';
+
+    res.status(upstream.status === 206 ? 206 : 200);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Accept-Ranges', acceptRanges);
+
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+    if (contentRange) {
+      res.setHeader('Content-Range', contentRange);
+    }
+
+    if (!upstream.body) {
+      console.error(`[StreamProxy] Missing upstream body for ${targetUrl}`);
+      return res.status(502).json({ error: 'Upstream returned no response body' });
+    }
+
+    // Stream upstream response directly to client (no full buffering).
+    await pipeline(Readable.fromWeb(upstream.body), res);
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.error(`[StreamProxy] Timeout fetching ${targetUrl}`);
+      if (!res.headersSent) {
+        return res.status(504).json({ error: 'Upstream request timed out' });
+      }
+      return;
+    }
+
+    console.error(`[StreamProxy] Failed for ${targetUrl}:`, error.message);
+    if (!res.headersSent) {
+      return res.status(502).json({ error: 'Failed to fetch upstream stream' });
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 });
 
 let mediaFilesCache = { data: null, lastUpdate: 0 };
