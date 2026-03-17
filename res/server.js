@@ -2685,13 +2685,6 @@ app.get('/api/stream', async (req, res) => {
   const timeoutMs = 15000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  // If downstream client disconnects, abort upstream fetch to avoid leaking work/sockets.
-  req.on('close', () => {
-    if (!res.writableEnded) {
-      controller.abort();
-    }
-  });
-
   try {
     const upstreamHeaders = {
       'accept': '*/*',
@@ -2715,10 +2708,10 @@ app.get('/api/stream', async (req, res) => {
       return res.status(502).json({ error: `Upstream responded with ${upstream.status}` });
     }
 
-    // Tolerant Range behavior: some valid origins ignore Range and return 200.
-    // We still stream safely as a full response instead of failing the request.
+    // If client requested byte range but upstream ignored it, fail clearly.
     if (rangeHeader && upstream.status !== 206) {
-      console.warn(`[StreamProxy] Range not honored by upstream, falling back to full stream for ${targetUrl}`);
+      console.error(`[StreamProxy] Upstream did not honor Range for ${targetUrl}`);
+      return res.status(502).json({ error: 'Upstream does not support range requests' });
     }
 
     const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
@@ -2743,19 +2736,8 @@ app.get('/api/stream', async (req, res) => {
     }
 
     // Stream upstream response directly to client (no full buffering).
-    // pipeline() handles backpressure between upstream and client sockets.
     await pipeline(Readable.fromWeb(upstream.body), res);
   } catch (error) {
-    // Client disconnected mid-transfer (or upstream closed early). Avoid crashing/noisy hard failures.
-    if (error?.code === 'ERR_STREAM_PREMATURE_CLOSE' || error?.message === 'Premature close') {
-      console.warn(`[StreamProxy] Stream closed early for ${targetUrl}`);
-      // Gracefully finish if still writable; client can decide whether to retry/range-seek.
-      if (!res.writableEnded) {
-        res.end();
-      }
-      return;
-    }
-
     if (error.name === 'AbortError') {
       console.error(`[StreamProxy] Timeout fetching ${targetUrl}`);
       if (!res.headersSent) {
